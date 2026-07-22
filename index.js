@@ -31,7 +31,7 @@ const REACTIONS = [
   { emoji: '1️⃣', label: '終日1: 9:00-18:00' },
   { emoji: '2️⃣', label: '終日2: 12:00-21:00' },
   { emoji: '3️⃣', label: '終日3: 15:00-24:00' },
-  { emoji: '❌', label: '不在' },
+  { emoji: '🏠', label: '不在' },
   { emoji: '❓', label: '不明' },
 ];
 
@@ -138,11 +138,18 @@ async function postAttendanceCheck(client) {
   });
   log(`投稿した: #${channel.name} (message id: ${message.id})`);
 
-  // スタンプは順番どおりに1つずつ（並列だとレート制限で順序が崩れる）
-  for (const { emoji } of REACTIONS) {
-    await message.react(emoji);
+  // スタンプは順番どおりに1つずつ（並列だとレート制限で順序が崩れる）。
+  // 1つ失敗しても残りは付けたいので、個別にエラーを拾う。
+  let added = 0;
+  for (const { emoji, label } of REACTIONS) {
+    try {
+      await message.react(emoji);
+      added += 1;
+    } catch (err) {
+      console.error(`スタンプ ${emoji}（${label}）を付けられなかった:`, err.message);
+    }
   }
-  log(`スタンプ ${REACTIONS.length} 個を付けた`);
+  log(`スタンプ ${added}/${REACTIONS.length} 個を付けた`);
 
   writeState({ lastPostedMs: Date.now(), lastPostedAt: jstNow(), messageId: message.id });
 }
