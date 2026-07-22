@@ -1,0 +1,19 @@
+{
+  "name": "mogurabo-attendance-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "毎日20時にオフィス出勤確認を投稿するDiscord Bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "now": "node index.js --now"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "dotenv": "^17.4.2",
+    "node-cron": "^4.6.0"
+  }
+}
