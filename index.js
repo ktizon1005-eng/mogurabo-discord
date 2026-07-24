@@ -23,16 +23,15 @@ const CATCHUP_GIVE_UP_HOUR = 23;
 // 取りこぼしを確認する間隔
 const CATCHUP_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
-// 押してもらうスタンプ（この順番でBotが先に付ける）
+// 押してもらうスタンプ（この順番でBotが先に付ける）。
+// group が切り替わる境目は、メッセージ本文で空行を挟む（時間帯グループ／勤務状況グループ）
 const REACTIONS = [
-  { emoji: '🌅', label: '時間帯: 9-12' },
-  { emoji: '☀️', label: '時間帯: 12-18' },
-  { emoji: '🌙', label: '時間帯: 18-24' },
-  { emoji: '1️⃣', label: '終日1: 9:00-18:00' },
-  { emoji: '2️⃣', label: '終日2: 12:00-21:00' },
-  { emoji: '3️⃣', label: '終日3: 15:00-24:00' },
-  { emoji: '🏠', label: '不在' },
-  { emoji: '❓', label: '不明' },
+  { emoji: '🌅', label: '午前（9:00〜12:00）', group: 'time' },
+  { emoji: '☀️', label: '午後（12:00〜18:00）', group: 'time' },
+  { emoji: '🌙', label: '夜（18:00〜24:00）', group: 'time' },
+  { emoji: '🏠', label: '在宅勤務', group: 'status' },
+  { emoji: '🛌', label: 'オフ', group: 'status' },
+  { emoji: '❓', label: '未定', group: 'status' },
 ];
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
@@ -105,17 +104,26 @@ function todayInJST() {
   };
 }
 
-function buildMessage() {
-  const { month, day, weekday } = todayInJST();
-  const legend = REACTIONS.map((r) => `${r.emoji} ${r.label}`).join('\n');
+/** スタンプの凡例。group が切り替わる境目に空行を入れる */
+function buildLegend() {
+  const lines = [];
+  let prevGroup = null;
+  for (const r of REACTIONS) {
+    if (prevGroup !== null && r.group !== prevGroup) lines.push('');
+    lines.push(`${r.emoji} ${r.label}`);
+    prevGroup = r.group;
+  }
+  return lines.join('\n');
+}
 
+function buildMessage() {
   return [
     ...(MENTION ? [MENTION] : []),
-    '**明日のオフィス出勤確認**',
-    `スタンプの期限：${month}月${day}日(${weekday}) 23時59分`,
-    '※必ずスタンプを押してください',
+    '**明日のオフィス出勤確認**🐹',
+    '⏰ 本日23:59まで',
+    '※当てはまるもの全てにスタンプしてください！',
     '',
-    legend,
+    buildLegend(),
   ].join('\n');
 }
 
