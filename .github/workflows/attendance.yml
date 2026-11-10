@@ -1,0 +1,49 @@
+name: 出勤確認の投稿
+
+on:
+  schedule:
+    # GitHub の定時実行は数分〜数十分遅れることがあるので、20時から数回起動する。
+    # 2回目以降は「今日の分が投稿済みか」を見て、済んでいれば何もしない。
+    - cron: '0 11 * * *'   # 20:00 JST
+    - cron: '30 11 * * *'  # 20:30 JST
+    - cron: '0 12 * * *'   # 21:00 JST
+    - cron: '0 13 * * *'   # 22:00 JST
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '確認だけ（投稿しない）'
+        type: boolean
+        default: true
+
+concurrency:
+  group: attendance-post
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --omit=dev
+      - name: 投稿する
+        run: node scripts/post-once.js
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          MENTION: ${{ secrets.MENTION }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
+      # 公開リポジトリは60日コミットが無いと定時実行が自動で止まるので、毎回有効に戻しておく
+      - name: 定時実行を有効のまま保つ
+        if: always()
+        run: gh workflow enable attendance.yml --repo "$GITHUB_REPOSITORY" || true
+        env:
+          GH_TOKEN: ${{ github.token }}

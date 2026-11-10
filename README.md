@@ -97,3 +97,13 @@ launchctl load ~/Library/LaunchAgents/com.mogurabo.attendance-bot.plist
 
 `.env` にはBotトークンが入っている。git管理外（`.gitignore` 済み）。
 漏れた場合は Discord Developer Portal で **Reset Token**。
+
+## クラウドでの定時投稿（2026-11-10〜 こちらが本番）
+
+Macが寝ていると投稿が抜ける（11/8・11/9に発生）ため、GitHub Actions から投稿する形に移した。
+
+- 定義: `.github/workflows/attendance.yml`、処理: `scripts/post-once.js`
+- 20:00 / 20:30 / 21:00 / 22:00（JST）に起動。今日の分がすでにあれば何もしないので重複しない
+- 秘密情報はリポジトリの Secrets（`DISCORD_TOKEN` / `CHANNEL_ID` / `MENTION`）
+- 手動の確認: Actions → 「出勤確認の投稿」→ Run workflow（既定は確認だけで投稿しない）
+- Macの常駐Bot（launchd）は二重投稿を防ぐため止めてある。戻すときは `launchctl load ~/Library/LaunchAgents/com.mogurabo.attendance-bot.plist`
