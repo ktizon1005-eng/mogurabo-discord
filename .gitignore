@@ -3,3 +3,4 @@ node_modules/
 .DS_Store
 *.log
 state.json
+gas/setup_once.gs

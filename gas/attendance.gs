@@ -4,31 +4,34 @@
  * 毎日20時台に「📢｜メインメンバー業務連絡」の「出勤確認」スレッドへ
  * 明日のオフィス出勤確認を投稿し、回答用のスタンプを6つ付ける。
  *
- * もぐメイトの自動配信（jido_haishin.gs）と同じく、GASの時刻トリガーで動かす。
+ * もぐメイトの自動配信（jido_haishin.gs）と同じく、GASの時刻トリガー＋ウェブフックで送る。
  * Macの電源やスリープとは関係なく動く。
- * ウェブフックではスタンプを付けられないので、投稿は「出勤管理マン」ボットで行う。
+ *
+ * ・投稿はウェブフックで行う（GASから確実に届く）。
+ * ・スタンプはウェブフックでは付けられないので「出勤管理マン」ボットで付ける。
+ *   DiscordはGASからのボットの操作をときどき弾く（403 / code 40333）ので、
+ *   付けられなかった分は10分後の次の起動でやり直し、6つそろうまで続ける。
  *
  * ---------------------------------------------------------------------
+ * ■ スクリプト プロパティ（プロジェクトの設定 → スクリプト プロパティ）
+ *     WEBHOOK_URL       … 「📢｜メインメンバー業務連絡」のウェブフックURL（知っている人は誰でも投稿できる鍵）
+ *     CHANNEL_ID        … 出勤確認スレッドのID
+ *     DISCORD_BOT_TOKEN … 出勤管理マンのトークン（スタンプ用）
+ *   ★URLやトークンはコードに書かない。ここに置く。
+ *
  * ■ 最初にやること（1回だけ）
- *
- *   1. プロジェクトの設定 → スクリプト プロパティ に2件登録する。
- *        DISCORD_BOT_TOKEN … 出勤管理マンのトークン（~/mogurabo-discord-1/.env の DISCORD_TOKEN と同じ）
- *        CHANNEL_ID        … 1529357135698464878 （出勤確認スレッド）
- *      ★トークンはコードに書かない。ここに置く。
- *
- *   2. checkSetup() を実行して、実行ログが全部 OK になることを確かめる。投稿はしない。
- *   3. previewMessage() を実行して、投稿される文面を確かめる。投稿はしない。
- *   4. setupTrigger() を実行してトリガーを張る（10分ごと）。
+ *   1. checkSetup() を実行して、実行ログが OK になることを確かめる。投稿はしない。
+ *   2. setupTrigger() を実行してトリガーを張る（10分ごと）。
  *
  * ■ 動き方
  *   runAttendance() が10分ごとに起動する。
- *   ・20:00〜22:59（日本時間）のあいだで、今日の分がまだなら投稿する（ふつうは20:00〜20:10）
- *   ・今日の分があれば何もしない（スレッドの直近の投稿も見るので、Macのボットと二重にならない）
- *   ・23時を過ぎたらその日は送らない（期限23:59に間に合わないため）
- *   ・スレッドが自動で閉じていたら開け直してから投稿する
+ *   ・20:00〜22:59（日本時間）に、今日の分がまだなら投稿する（ふつうは20:00〜20:10）
+ *   ・投稿したあとは、23:59までスタンプが6つそろうまで付け直す
+ *   ・23時を過ぎたらその日は投稿しない（期限23:59に間に合わないため）
+ *   ・スレッドが閉じていても、ウェブフックで送ると自動で開く
  *
  * ■ 手で使うもの
- *   checkSetup()      … 設定とボットの権限を確かめる。投稿しない
+ *   checkSetup()      … 設定を確かめる。投稿しない
  *   previewMessage()  … 文面をログに出す。投稿しない
  *   postNow()         … 時間に関係なく今すぐ1回投稿する（今日の分が済んでいても投稿する）
  *   removeTrigger()   … トリガーを外す（止めたいとき）
@@ -37,10 +40,9 @@
 var ATT = {
   API: 'https://discord.com/api/v10',
   START_HOUR: 20,      // この時刻から投稿する
-  GIVE_UP_HOUR: 23,    // この時刻を過ぎたらその日は送らない
-  SINCE_HOUR: 19,      // この時刻より後のボットの投稿を「今日の分」とみなす
-  MARK: '明日のオフィス出勤確認',
+  GIVE_UP_HOUR: 23,    // この時刻を過ぎたらその日は投稿しない（スタンプの付け直しは続ける）
   MENTION: '@everyone',
+  USERNAME: '出勤管理マン',
   REACTIONS: [
     { emoji: '🌅', label: '午前（9:00〜12:00）', group: 'time' },
     { emoji: '☀️', label: '午後（12:00〜18:00）', group: 'time' },
@@ -64,93 +66,89 @@ function buildAttendanceMessage_() {
 
 function attProps_() {
   var p = PropertiesService.getScriptProperties();
-  return { token: (p.getProperty('DISCORD_BOT_TOKEN') || '').trim(), channel: (p.getProperty('CHANNEL_ID') || '').trim(), store: p };
-}
-
-function attApi_(method, path, body) {
-  var cfg = attProps_();
-  for (var attempt = 1; attempt <= 5; attempt++) {
-    var opt = {
-      method: method,
-      headers: { Authorization: 'Bot ' + cfg.token, 'User-Agent': 'DiscordBot (mogulab-attendance, 1.0)' },
-      muteHttpExceptions: true,
-    };
-    if (body) { opt.contentType = 'application/json'; opt.payload = JSON.stringify(body); }
-    var res = UrlFetchApp.fetch(ATT.API + path, opt);
-    var code = res.getResponseCode();
-    if (code === 429) {
-      var wait = 1;
-      try { wait = JSON.parse(res.getContentText()).retry_after || 1; } catch (e) {}
-      Utilities.sleep(Math.ceil(wait * 1000) + 200);
-      continue;
-    }
-    if (code >= 500 && attempt < 5) { Utilities.sleep(2000 * attempt); continue; }
-    if (code >= 300) throw new Error(method + ' ' + path + ' → ' + code + ' ' + res.getContentText());
-    return code === 204 ? null : JSON.parse(res.getContentText());
-  }
-  throw new Error(method + ' ' + path + ' → 再試行しても失敗');
+  var g = function (k) { return (p.getProperty(k) || '').trim(); };
+  return { webhook: g('WEBHOOK_URL'), channel: g('CHANNEL_ID'), token: g('DISCORD_BOT_TOKEN'), store: p };
 }
 
 function jstNow_() {
   var now = new Date();
-  return {
-    date: Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd'),
-    hour: Number(Utilities.formatDate(now, 'Asia/Tokyo', 'H')),
-  };
+  return { date: Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd'), hour: Number(Utilities.formatDate(now, 'Asia/Tokyo', 'H')) };
 }
 
-/** 今日の SINCE_HOUR 時（日本時間）以降に、ボットが出勤確認を投稿済みか */
-function postedToday_(meId) {
-  var cfg = attProps_();
-  var since = new Date(jstNow_().date + 'T' + ('0' + ATT.SINCE_HOUR).slice(-2) + ':00:00+09:00').getTime();
-  var msgs = attApi_('get', '/channels/' + cfg.channel + '/messages?limit=50');
-  return msgs.some(function (m) {
-    return m.author && m.author.id === meId && String(m.content).indexOf(ATT.MARK) >= 0 && new Date(m.timestamp).getTime() >= since;
-  });
-}
-
-function postAttendance_() {
-  var cfg = attProps_();
-  var ch = attApi_('get', '/channels/' + cfg.channel);
-  if (ch.thread_metadata && ch.thread_metadata.archived) {
-    attApi_('patch', '/channels/' + cfg.channel, { archived: false });
-    Logger.log('スレッドが閉じていたので開け直した');
-  }
-  var msg = attApi_('post', '/channels/' + cfg.channel + '/messages', {
-    content: buildAttendanceMessage_(),
-    allowed_mentions: { parse: ['everyone', 'roles'] },
-  });
-  var added = 0;
-  ATT.REACTIONS.forEach(function (r) {
-    try {
-      attApi_('put', '/channels/' + cfg.channel + '/messages/' + msg.id + '/reactions/' + encodeURIComponent(r.emoji) + '/@me');
-      added++;
-    } catch (e) {
-      Logger.log('スタンプ ' + r.emoji + ' を付けられなかった: ' + e.message);
+/** URL へ送る。429 と 5xx は待ってやり直す */
+function attFetch_(url, opt) {
+  opt.muteHttpExceptions = true;
+  for (var attempt = 1; attempt <= 4; attempt++) {
+    var res = UrlFetchApp.fetch(url, opt), code = res.getResponseCode();
+    if (code === 429) {
+      var wait = 1;
+      try { wait = JSON.parse(res.getContentText()).retry_after || 1; } catch (e) {}
+      Utilities.sleep(Math.ceil(wait * 1000) + 300);
+      continue;
     }
-    Utilities.sleep(400);
+    if (code >= 500 && attempt < 4) { Utilities.sleep(2000 * attempt); continue; }
+    if (code >= 300) throw new Error(code + ' ' + res.getContentText());
+    return code === 204 ? null : JSON.parse(res.getContentText());
+  }
+  throw new Error('再試行しても失敗');
+}
+
+function botApi_(method, path) {
+  var cfg = attProps_();
+  return attFetch_(ATT.API + path, { method: method, headers: { Authorization: 'Bot ' + cfg.token, 'User-Agent': 'DiscordBot (mogulab-attendance, 1.0)' } });
+}
+
+/** ウェブフックで投稿して、メッセージIDを返す */
+function postByWebhook_() {
+  var cfg = attProps_();
+  var url = cfg.webhook + (cfg.webhook.indexOf('?') >= 0 ? '&' : '?') + 'wait=true&thread_id=' + cfg.channel;
+  var msg = attFetch_(url, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify({ content: buildAttendanceMessage_(), username: ATT.USERNAME, allowed_mentions: { parse: ['everyone', 'roles'] } }),
   });
-  cfg.store.setProperty('LAST_POSTED_DATE', jstNow_().date);
-  Logger.log('投稿した（message id: ' + msg.id + '）。スタンプ ' + added + '/' + ATT.REACTIONS.length);
+  var t = jstNow_();
+  cfg.store.setProperties({ LAST_POSTED_DATE: t.date, LAST_MESSAGE_ID: msg.id, REACTED: '' });
+  Logger.log('投稿した（message id: ' + msg.id + '）');
+  return msg.id;
+}
+
+/** まだ付いていないスタンプを付ける。弾かれたらそこで止めて、次の起動でやり直す */
+function addMissingReactions_() {
+  var cfg = attProps_();
+  var id = cfg.store.getProperty('LAST_MESSAGE_ID');
+  if (!id || !cfg.token) return;
+  var done = (cfg.store.getProperty('REACTED') || '').split(',').filter(String);
+  for (var i = 0; i < ATT.REACTIONS.length; i++) {
+    var e = ATT.REACTIONS[i].emoji;
+    if (done.indexOf(e) >= 0) continue;
+    try {
+      botApi_('put', '/channels/' + cfg.channel + '/messages/' + id + '/reactions/' + encodeURIComponent(e) + '/@me');
+      done.push(e);
+      cfg.store.setProperty('REACTED', done.join(','));
+      Utilities.sleep(400);
+    } catch (err) {
+      Logger.log('スタンプ ' + e + ' は次の起動でやり直す: ' + err.message);
+      break;
+    }
+  }
+  Logger.log('スタンプ ' + done.length + '/' + ATT.REACTIONS.length);
 }
 
 /** トリガーから10分ごとに呼ばれる */
 function runAttendance() {
   var t = jstNow_(), cfg = attProps_();
-  if (t.hour < ATT.START_HOUR || t.hour >= ATT.GIVE_UP_HOUR) return;
-  if (cfg.store.getProperty('LAST_POSTED_DATE') === t.date) return;
+  if (t.hour < ATT.START_HOUR) return;
+  var postedToday = cfg.store.getProperty('LAST_POSTED_DATE') === t.date;
+  var reactedAll = (cfg.store.getProperty('REACTED') || '').split(',').filter(String).length >= ATT.REACTIONS.length;
+  if (postedToday && reactedAll) return;
+  if (!postedToday && t.hour >= ATT.GIVE_UP_HOUR) return;
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) return;
   try {
-    if (cfg.store.getProperty('LAST_POSTED_DATE') === t.date) return;
-    var me = attApi_('get', '/users/@me');
-    if (postedToday_(me.id)) {
-      cfg.store.setProperty('LAST_POSTED_DATE', t.date);
-      Logger.log('今日の分はスレッドに投稿済み（Macのボットなど）。何もしない');
-      return;
-    }
-    postAttendance_();
+    if (cfg.store.getProperty('LAST_POSTED_DATE') !== t.date) postByWebhook_();
+    addMissingReactions_();
   } finally {
     lock.releaseLock();
   }
@@ -158,23 +156,23 @@ function runAttendance() {
 
 function checkSetup() {
   var cfg = attProps_();
-  Logger.log((cfg.token ? 'OK ' : 'NG ') + 'DISCORD_BOT_TOKEN');
+  Logger.log((cfg.webhook ? 'OK ' : 'NG ') + 'WEBHOOK_URL');
   Logger.log((cfg.channel ? 'OK ' : 'NG ') + 'CHANNEL_ID');
-  if (!cfg.token || !cfg.channel) return;
-  var me = attApi_('get', '/users/@me');
-  Logger.log('OK ボット: ' + me.username);
-  var ch = attApi_('get', '/channels/' + cfg.channel);
-  Logger.log('OK 投稿先: #' + ch.name + (ch.thread_metadata && ch.thread_metadata.archived ? '（閉じている→投稿時に開け直す）' : ''));
-  attApi_('get', '/channels/' + cfg.channel + '/messages?limit=1');
-  Logger.log('OK 過去の投稿を読める');
-  Logger.log('今日の分: ' + (postedToday_(me.id) ? '投稿済み' : 'まだ'));
+  Logger.log((cfg.token ? 'OK ' : 'NG ') + 'DISCORD_BOT_TOKEN（スタンプ用）');
+  if (cfg.webhook) {
+    var w = attFetch_(cfg.webhook, { method: 'get' });
+    Logger.log('OK ウェブフック: 「' + w.name + '」（部屋のID ' + w.channel_id + '）');
+  }
+  try { Logger.log('OK ボット: ' + botApi_('get', '/users/@me').username); }
+  catch (e) { Logger.log('注意 ボットが今は弾かれた（スタンプは次の起動でやり直すので問題なし）: ' + e.message); }
   var n = ScriptApp.getProjectTriggers().filter(function (x) { return x.getHandlerFunction() === 'runAttendance'; }).length;
   Logger.log((n ? 'OK ' : 'まだ ') + 'トリガー ' + n + '本');
+  Logger.log('今日の投稿: ' + (cfg.store.getProperty('LAST_POSTED_DATE') === jstNow_().date ? '済み' : 'まだ'));
 }
 
 function previewMessage() { Logger.log(buildAttendanceMessage_()); }
 
-function postNow() { postAttendance_(); }
+function postNow() { postByWebhook_(); addMissingReactions_(); }
 
 function setupTrigger() {
   removeTrigger();
