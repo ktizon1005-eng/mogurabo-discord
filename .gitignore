@@ -4,3 +4,5 @@ node_modules/
 *.log
 state.json
 gas/setup_once.gs
+.webhook_url
+.gas_admin_key

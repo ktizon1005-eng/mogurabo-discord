@@ -1,13 +1,8 @@
 name: 出勤確認の投稿
 
 on:
-  schedule:
-    # GitHub の定時実行は数分〜数十分遅れることがあるので、20時から数回起動する。
-    # 2回目以降は「今日の分が投稿済みか」を見て、済んでいれば何もしない。
-    - cron: '0 11 * * *'   # 20:00 JST
-    - cron: '30 11 * * *'  # 20:30 JST
-    - cron: '0 12 * * *'   # 21:00 JST
-    - cron: '0 13 * * *'   # 22:00 JST
+  # 時刻はGAS（出勤確認（出勤管理マン））が守り、20時台にここを呼ぶ。
+  # GitHubの定時実行（schedule）は7時間以上遅れたことがあるので使わない（2026-11-10）。
   workflow_dispatch:
     inputs:
       dry_run:
@@ -41,9 +36,3 @@ jobs:
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           MENTION: ${{ secrets.MENTION }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
-      # 公開リポジトリは60日コミットが無いと定時実行が自動で止まるので、毎回有効に戻しておく
-      - name: 定時実行を有効のまま保つ
-        if: always()
-        run: gh workflow enable attendance.yml --repo "$GITHUB_REPOSITORY" || true
-        env:
-          GH_TOKEN: ${{ github.token }}
