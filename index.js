@@ -127,10 +127,24 @@ function buildMessage() {
   ].join('\n');
 }
 
-async function postAttendanceCheck(client) {
+async function postAttendanceCheck(client, { skipIfPosted = false } = {}) {
   const channel = await client.channels.fetch(CHANNEL_ID);
   if (!channel || !channel.isTextBased()) {
     throw new Error(`チャンネル ${CHANNEL_ID} がテキストチャンネルとして取得できない`);
+  }
+
+  // 本番はGAS→GitHub Actionsが20時台に送る。こちらは予備なので、今日の分がスレッドにあれば送らない
+  if (skipIfPosted) {
+    const since = jstTimeToday(19, 0);
+    const recent = await channel.messages.fetch({ limit: 50 });
+    const posted = recent.find(
+      (m) => m.author.id === client.user.id && m.content.includes('明日のオフィス出勤確認') && m.createdTimestamp >= since,
+    );
+    if (posted) {
+      log('今日の分はスレッドに投稿済み（GAS→GitHub など）。送らない');
+      writeState({ lastPostedMs: Date.now(), lastPostedAt: jstNow(), messageId: posted.id });
+      return;
+    }
   }
 
   // 投稿先はスレッド。放置するとDiscordが自動アーカイブし、アーカイブ中は投稿できない。
@@ -172,7 +186,7 @@ async function runPost(client, reason) {
   }
   posting = true;
   try {
-    await postAttendanceCheck(client);
+    await postAttendanceCheck(client, { skipIfPosted: true });
   } catch (err) {
     console.error(`投稿に失敗 (${reason}):`, err.message);
   } finally {
