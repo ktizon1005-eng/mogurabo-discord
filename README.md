@@ -98,12 +98,14 @@ launchctl load ~/Library/LaunchAgents/com.mogurabo.attendance-bot.plist
 `.env` にはBotトークンが入っている。git管理外（`.gitignore` 済み）。
 漏れた場合は Discord Developer Portal で **Reset Token**。
 
-## クラウドでの定時投稿（2026-11-10〜 こちらが本番）
+## 自動投稿のしくみ（2026-11-11〜）
 
-Macが寝ていると投稿が抜ける（11/8・11/9に発生）ため、GitHub Actions から投稿する形に移した。
+| 役割 | どこで | 内容 |
+|---|---|---|
+| 時刻を守る | GAS「出勤確認（出勤管理マン）」 `gas/attendance.gs` | 10分ごとに起動し、20時台に GitHub Actions を呼ぶ。成功を確かめ、失敗なら呼び直す |
+| 送る | GitHub Actions「出勤確認の投稿」 `.github/workflows/attendance.yml` → `scripts/post-once.js` | ボットで投稿しスタンプを付ける。今日の分があれば何もしない |
+| 予備 | Macの常駐ボット（launchd） | 20:20以降、スレッドに今日の分が無ければ送る（Macが起きていれば） |
 
-- 定義: `.github/workflows/attendance.yml`、処理: `scripts/post-once.js`
-- 20:00 / 20:30 / 21:00 / 22:00（JST）に起動。今日の分がすでにあれば何もしないので重複しない
-- 秘密情報はリポジトリの Secrets（`DISCORD_TOKEN` / `CHANNEL_ID` / `MENTION`）
-- 手動の確認: Actions → 「出勤確認の投稿」→ Run workflow（既定は確認だけで投稿しない）
-- Macの常駐Bot（launchd）は二重投稿を防ぐため止めてある。再起動で勝手に戻らないよう plist は `~/Library/LaunchAgents/com.mogurabo.attendance-bot.plist.disabled` に改名した。戻すときは `.disabled` を外して `launchctl load`
+- GitHub の定時実行（schedule）は7時間以上遅れて11/10が抜けたので使わない。呼び出し（workflow_dispatch）は遅れない。
+- GAS から Discord のボット操作は弾かれる（403 / 40333）ので、GAS からは直接送らない。
+- GAS の更新は `cd gas && clasp push`。管理用の入口（`gas/admin.gs`、合言葉は `.gas_admin_key`）で設定の確認・トリガー張りができる。
